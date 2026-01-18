@@ -215,7 +215,7 @@ echo "Converting from MP3 to individual ulaw format files"
 lame -h --decode $TMPDIR/news.mp3 $TMPDIR/news2.wav &> /dev/null 2>&1
 
 # Split into parts when 3.5 seconds of silence is detected
-sox $TMPDIR/news2.wav $TMPDIR/news.part.wav silence 1 0 0.1% 1 3.0 0.1% : newfile : restart
+sox $TMPDIR/news2.wav $TMPDIR/news.part.wav silence 1 0 0.2% 1 2.5 0.2% : newfile : restart
 
 # Rename output files to remove leading zeros (001 to 1, 010 to 10)
 # This uses arch rename which doesn't seem to support regex. We run it twice to handle when there are >9 segments
