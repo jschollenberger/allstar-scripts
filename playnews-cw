@@ -194,14 +194,14 @@ else
  exit 0
 fi
 
-# On holidays ARRL does not put out a news MP3. Instead there is a 
+# On holidays ARRL does not put out a news MP3. Instead there is a
 # shorter HTML file. The following routine checks for this and
 # exits if there is no valid MP3 file.
 
 filesize=$(wc -c <$TMPDIR/news.mp3)
 if [ $filesize -lt 100000 ]
  then
-    echo "File size too small for play"
+    echo "File size too small for play. Either there was no news broadcast or the download failed."
     exit 0
 fi
 
@@ -214,28 +214,140 @@ echo "Converting from MP3 to individual ulaw format files"
 
 lame -h --decode $TMPDIR/news.mp3 $TMPDIR/news2.wav &> /dev/null 2>&1
 
-# Split into parts when 3.5 seconds of silence is detected
-sox $TMPDIR/news2.wav $TMPDIR/news.part.wav silence 1 0 0.2% 1 2.5 0.2% : newfile : restart
+echo "Splitting into parts when silence is detected"
+# Split into parts when 2.5 seconds of 0.2% silence is detected
+sox $TMPDIR/news2.wav $TMPDIR/news.part.wav silence 1 0 2% 1 2.5 2% : newfile : restart
 
+echo "Removing CW K from each part"
+# Trim off CW K
+for f in $TMPDIR/news.part*.wav; do
+  sox "$f" "${f%.wav}_trimmed.wav" trim 0 -0.7 pad 1.5 1.5
+  mv -v "${f%.wav}_trimmed.wav" "$f"   # overwrite original
+done
+
+echo "Merging parts into longer files, up to 180 seconds, but never more"
+# merge
+
+cd /tmp
+
+MAX_SEC=180
+output_prefix="combined"
+counter=1
+current_files=()
+current_dur=0
+
+# ── Create the custom beep once ─────────────────────────────────────────
+BEEP_FILE="/tmp/beep_1633hz_50ms.wav"
+
+if [[ ! -f "$BEEP_FILE" ]]; then
+    sox -n -r 44100 -c 1 "$BEEP_FILE" \
+        synth 0.05 sine 1633 \
+        vol 0.6
+    echo "beep made"
+fi
+
+# ── Main loop ────────────────────────────────────────────────────────────
+for file in news.part*.wav; do
+    if [[ ! -f "$file" ]]; then
+        echo "No files found matching news.part*.wav"
+        exit 1
+    fi
+
+    # Get duration in seconds (convert HH:MM:SS.ss → decimal)
+    dur_line=$(sox --i "$file" 2>&1 | grep -i '^ *Duration' || echo "Duration : 0")
+    dur=$(echo "$dur_line" | awk '
+    {
+        if ($3 ~ /^[0-9][0-9]:[0-9][0-9]:[0-9][0-9](\.[0-9]+)?$/) {
+            split($3, a, ":")
+            print a[1]*3600 + a[2]*60 + a[3]
+        } else {
+            print 0
+        }
+    }')
+
+    # If adding this file would exceed limit → write current chunk and reset
+    if (( $(echo "$current_dur + $dur > $MAX_SEC" | bc -l) )); then
+        if [ ${#current_files[@]} -gt 0 ]; then
+            printf "Creating %s.%d.wav (%.1f s)\n" "$output_prefix" "$counter" "$current_dur"
+
+            # Build concatenation with beep between segments (no beep after last)
+            concat_args=()
+            for i in "${!current_files[@]}"; do
+                concat_args+=("${current_files[i]}")
+                # Add beep only between segments, not after the final one
+#                if (( i < ${#current_files[@]}-1 )); then
+                    concat_args+=("$BEEP_FILE")
+#                fi
+            done
+
+            sox "${concat_args[@]}" "${output_prefix}.${counter}.wav"
+            ((counter++))
+        fi
+        current_files=()
+        current_dur=0
+    fi
+
+    current_files+=("$file")
+    current_dur=$(echo "$current_dur + $dur" | bc -l)
+done
+
+# Last chunk
+if [ ${#current_files[@]} -gt 0 ]; then
+    printf "Creating %s.%d.wav (%.1f s)\n" "$output_prefix" "$counter" "$current_dur"
+
+    concat_args=()
+    for i in "${!current_files[@]}"; do
+        concat_args+=("${current_files[i]}")
+        if (( i < ${#current_files[@]}-1 )); then
+            concat_args+=("$BEEP_FILE")
+        fi
+    done
+
+    sox "${concat_args[@]}" "${output_prefix}.${counter}.wav"
+fi
+
+
+# delete originals and rename
+
+echo "Removing individual news segments"
+
+rm -fv $TMPDIR/news.part*.wav
+
+echo "Renaming combined files to news.partN.wav style..."
+
+rename_counter=1
+for f in /tmp/${output_prefix}.*.wav; do
+    if [[ -f "$f" ]]; then
+        newname=$(printf "news.part%d.wav" "$rename_counter")
+        mv -fv "$f" "$newname"
+        ((rename_counter++))
+    fi
+done
+
+#this next part is now done in the step above
 # Rename output files to remove leading zeros (001 to 1, 010 to 10)
 # This uses arch rename which doesn't seem to support regex. We run it twice to handle when there are >9 segments
-rename -v news.part0 news.part /tmp/news*
-rename -v news.part0 news.part /tmp/news*
+#mv -v news.part0 news.part /tmp/news*
+#mv -v news.part0 news.part /tmp/news*
 
 
 # If you are using debian/ubuntu, you'll want to use this rename instead
 #rename -f -v 's/0+//' /tmp/news.part*.wav
 
+#sanity check. does part 1 exist? do any segments exceed 180 seconds?
 FILE=$TMPDIR/news.part1.wav
 if [ ! -f "$FILE" ]; then
     echo "$FILE does not exist. Something went wrong. Falling back to old version..."
     fallback
 else
-    LENGTH=`soxi -D $FILE 2>/dev/null`
-    if [ ${LENGTH%.*} -ge 180 ]; then
-        echo "$FILE exceeds 180 seconds ($LENGTH). Something went wrong. Falling back to old version..."
-        fallback
-    fi
+    for f in $TMPDIR/news.part*.wav; do
+        LENGTH=`soxi -D $FILE 2>/dev/null`
+        if [ ${LENGTH%.*} -ge 180 ]; then
+            echo "$FILE exceeds 180 seconds ($LENGTH). Something went wrong. Falling back to old version..."
+            fallback
+        fi
+    done
+    echo "Sanity check passed. $FILE exists and is of length: $LENGTH"
 fi
 
 # Get total number of files generated
@@ -265,15 +377,15 @@ TIME10=`date --date "$TIME now 10 minutes ago" +%H:%M`
 echo "Waiting to send 10 minute warning"
 while [ $(date +%H:%M) != $TIME10 ]; do sleep 1; done
    # Start 10 minute message, add 3 second delay to beginning
-   cat $VOICEDIR/silence3.ul "$VOICEDIR/${NEWSTYPE}start10.ul" > $TMPDIR/news.ul
-   /usr/bin/asterisk -rx "rpt $MODE $NODE $TMPDIR/news"
+   cat $VOICEDIR/silence2.ul "$VOICEDIR/${NEWSTYPE}start10.ul" > $TMPDIR/news.ul
+   /usr/sbin/asterisk -rx "rpt $MODE $NODE $TMPDIR/news"
 
 # Wait Send 5 minute announcement
 echo "Waiting to send 5 minute warning"
 while [ $(date +%H:%M) != $TIME5 ]; do sleep 1; done
    # Start 5 minute message, add 3 second delay to beginning
-   cat $VOICEDIR/silence3.ul "$VOICEDIR/${NEWSTYPE}start5.ul" > $TMPDIR/news.ul
-   /usr/bin/asterisk -rx "rpt $MODE $NODE $TMPDIR/news"
+   cat $VOICEDIR/silence2.ul "$VOICEDIR/${NEWSTYPE}start5.ul" > $TMPDIR/news.ul
+   /usr/sbin/asterisk -rx "rpt $MODE $NODE $TMPDIR/news"
 
 # wait for start time
 echo "Waiting for start time"
@@ -288,20 +400,12 @@ read -n 1
 fi
 
 # send ID
-/usr/bin/asterisk -rx "rpt fun $NODE *80"
-echo
-echo "Starting in 3 seconds - Hit Ctrl C to interrupt"
-for (( X=3; X >= 1; X-- ))
-do
-     echo -n "$X "
-     sleep 1
-done
-echo
+/usr/sbin/asterisk -rx "rpt fun $NODE *80"
 
 # send start announcment
 # Add 3 second delay to beginning of text
-cat $VOICEDIR/silence3.ul "$VOICEDIR/${NEWSTYPE}start.ul" > $TMPDIR/news.ul
-/usr/bin/asterisk -rx "rpt $MODE $NODE $TMPDIR/news"
+cat $VOICEDIR/silence2.ul "$VOICEDIR/${NEWSTYPE}start.ul" > $TMPDIR/news.ul
+/usr/sbin/asterisk -rx "rpt $MODE $NODE $TMPDIR/news"
 
 sleep 10
 
@@ -311,16 +415,21 @@ while [ "$PART" -le "$MAXPART" ]; do
       echo "Playing file $TMPDIR/news.part$PART.ul"
       if [ "$PART" -lt  "$MAXPART" ]; then
          # Add Station break message with 1 second delay
-         cat $TMPDIR/news.part$PART.ul $VOICEDIR/silence1.ul "$VOICEDIR/${NEWSTYPE}continue.ul" > $TMPDIR/news.ul
-         /usr/bin/asterisk -rx "rpt $MODE $NODE $TMPDIR/news"
+#         cat $TMPDIR/news.part$PART.ul $VOICEDIR/silence1.ul "$VOICEDIR/${NEWSTYPE}continue.ul" > $TMPDIR/news.ul
+#    Do not insert the 1sec silence and "audio news will continue in 10 seconds" message between every part
+         cat $TMPDIR/news.part$PART.ul > $TMPDIR/news.ul
+         /usr/sbin/asterisk -rx "rpt $MODE $NODE $TMPDIR/news"
          # Break after determined part length + 10 seconds
          # Note this break has to be long enough for network ID's
          LENGTH=`soxi -D $TMPDIR/news.part$PART.ul 2>/dev/null`
-         sleep $((${LENGTH/.*}+15))
+         echo "Length is $LENGTH"
+#    reduced from 15 since we're not doing the break message
+#         sleep $((${LENGTH/.*}+15))
+         sleep $((${LENGTH/.*}+8))
       else
-         # Append end message with 2 second delay
-         cat $TMPDIR/news.part$PART.ul $VOICEDIR/silence2.ul "$VOICEDIR/${NEWSTYPE}stop.ul" > $TMPDIR/news.ul
-         /usr/bin/asterisk -rx "rpt $MODE $NODE $TMPDIR/news"
+         # Append end message with 1 second delay
+         cat $TMPDIR/news.part$PART.ul $VOICEDIR/silence1.ul "$VOICEDIR/${NEWSTYPE}stop.ul" > $TMPDIR/news.ul
+         /usr/sbin/asterisk -rx "rpt $MODE $NODE $TMPDIR/news"
          # Terminate script at end of audio
          LENGTH=`soxi -D $TMPDIR/news.ul 2>/dev/null`
          sleep ${LENGTH/.*}
@@ -333,5 +442,3 @@ rm -f $TMPDIR/news*
 
 # Done
 exit 0
-
-
