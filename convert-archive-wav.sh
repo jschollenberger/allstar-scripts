@@ -57,6 +57,10 @@ trap 'SHUTDOWN=1; [[ -n "$INOTIFY_PID" ]] && kill "$INOTIFY_PID" 2>/dev/null' TE
 # behind newer files' conversions by the time it's dequeued.
 declare -A RECENT_CONVERSIONS
 
+# Total successful conversions this run -- used to report how many of the
+# files checked in a catch-up scan actually needed converting.
+CONVERTED_COUNT=0
+
 _prune_recent() {
     local now="$1" k
     for k in "${!RECENT_CONVERSIONS[@]}"; do
@@ -66,6 +70,8 @@ _prune_recent() {
 
 process_file() {
     local NEWFILE="$1"
+    local QUIET="${2:-0}"        # 1 = suppress the routine "already PCM" line (used by catch_up_scan)
+    local DO_SETTLE="${3:-1}"    # 0 = skip SETTLE_DELAY (pre-existing files can't still be mid-write)
     local NEWFILE_LC="${NEWFILE,,}"
 
     # Case-insensitive .WAV filter; skip our own temp files outright.
@@ -87,7 +93,7 @@ process_file() {
     local TEMPFILE="$WATCH_DIR/${NEWFILE%.*}_temp.WAV"
 
     [[ -f "$INPUT" ]] || return
-    sleep "$SETTLE_DELAY"
+    [[ "$DO_SETTLE" == "1" ]] && sleep "$SETTLE_DELAY"
 
     local ENCODING
     ENCODING=$(soxi -e "$INPUT" 2>/dev/null)
@@ -98,7 +104,7 @@ process_file() {
     fi
 
     if [[ "$ENCODING" != "GSM" ]]; then
-        log "Skipping $NEWFILE — already PCM (encoding: $ENCODING)"
+        [[ "$QUIET" == "1" ]] || log "Skipping $NEWFILE — already PCM (encoding: $ENCODING)"
         return
     fi
 
@@ -106,6 +112,7 @@ process_file() {
     if sox -t wav -r 8000 -c 1 -e gsm "$INPUT" -t wav -r 8000 -c 1 -e signed-integer -b 16 "$TEMPFILE" 2>>"$LOGFILE"; then
         if mv "$TEMPFILE" "$INPUT"; then
             RECENT_CONVERSIONS["$NEWFILE"]=$(date +%s)
+            ((CONVERTED_COUNT++))
             log "SUCCESS: replaced $NEWFILE with playable PCM version"
         else
             log "FAILED mv for $NEWFILE"
@@ -117,6 +124,17 @@ process_file() {
     fi
 }
 
+catch_up_scan() {
+    local f total=0 before=$CONVERTED_COUNT
+    log "Catch-up scan: checking $WATCH_DIR for anything that arrived while not running"
+    for f in "$WATCH_DIR"/*; do
+        [[ -f "$f" ]] || continue
+        ((total++))
+        process_file "$(basename "$f")" 1 0
+    done
+    log "Catch-up scan complete: $total file(s) checked, $((CONVERTED_COUNT - before)) converted"
+}
+
 run_watcher() {
     local FIFO="/tmp/.convert-archive-wav.fifo.$$"
     rm -f "$FIFO"
@@ -124,6 +142,15 @@ run_watcher() {
 
     inotifywait -m -e close_write -e moved_to --format '%f' "$WATCH_DIR" 2>>"$LOGFILE" > "$FIFO" &
     INOTIFY_PID=$!
+
+    # Catch up on anything already sitting in WATCH_DIR -- covers a genuine
+    # cold start after downtime *and* inotifywait having briefly died and
+    # been restarted by the loop below. Runs after inotifywait is already
+    # live, so nothing that arrives during the scan itself gets missed: it
+    # just queues up in the FIFO and is handled right after, same as any
+    # other event (the RECENT_CONVERSIONS guard above quietly no-ops it if
+    # the scan already converted it).
+    catch_up_scan
 
     # No pipe here (`< "$FIFO"` is redirection, not a pipe), so this loop runs
     # in the current shell -- RECENT_CONVERSIONS updates in process_file
