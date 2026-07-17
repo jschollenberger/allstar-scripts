@@ -48,6 +48,14 @@ disconnect-outbound-links.sh [local_node]
 
 Modified version of `playnews` that breaks on ARRL news silence (a Morse "K" character followed by 4 seconds of silence) rather than waiting for a fixed duration (~160 seconds).
 
+Executed from cron:
+
+```
+# Schedule the news at least 10 minutes prior so we get the warning messages. we do 25 to accomodate download and conversion + potential failback
+# play the news on saturday
+15 8 * * 6 /etc/asterisk/local/playnews/playnews-cw ARRL 08:40 50420 G &>> /tmp/playnews.log
+```
+
 ## Requirements
 
 These scripts are written for Asterisk-based AllStarLink/HamVOIP nodes and call out to the `asterisk` CLI (`asterisk -rx ...`) directly, so they're intended to run on the node itself (or somewhere with `asterisk -rx` access). Some scripts additionally expect `/usr/local/etc/allstar.env` to define `NODE1` for your node's ID, and `convert-archive-wav.sh` requires `inotify-tools` and `sox`.
