@@ -30,7 +30,7 @@ exec 3>&1 1>>${LOG_FILE} 2>&1
 sleep 1
 
 echo_date () {
-	echo "[$(date '+%m/%d/%Y %H:%M:%S')] "$1""
+	echo "[$(date '+%m/%d/%Y %H:%M:%S')] $1"
 }
 
 # FIX: exact-element match instead of substring match against the
@@ -60,7 +60,7 @@ if [ -z "$2" ]; then
 	# read link list into array
 	readarray -s2 -t LINKSLIST < <( asterisk -rx "rpt linkslist $NODE1" )
 	# delete footer
-	unset LINKSLIST[-1]
+	unset 'LINKSLIST[-1]'
 else
 	REMOTE_NODE=$2
 	# FIX: read into an array (one element per line) instead of a scalar,
