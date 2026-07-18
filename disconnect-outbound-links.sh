@@ -36,7 +36,7 @@ else
 	NODE1=$1
 fi
 
-OUTBOUNDLINKS=`asterisk -rx "rpt lstats $NODE1" | grep "OUT" | awk {'print $1'}`
+OUTBOUNDLINKS=`asterisk -rx "rpt lstats $NODE1" | grep "OUT" | awk '{print $1}'`
 
 if [[ -z "$OUTBOUNDLINKS" ]] ; then
 	echo "No outbound links connected."
