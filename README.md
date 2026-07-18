@@ -1,5 +1,9 @@
 # allstar-scripts
 
+[![ShellCheck](https://github.com/jschollenberger/allstar-scripts/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/jschollenberger/allstar-scripts/actions/workflows/shellcheck.yml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+![Bash](https://img.shields.io/badge/Shell-Bash-4EAA25?logo=gnubash&logoColor=white)
+
 Random scripts for [AllStarLink](https://www.allstarlink.org/) / [HamVOIP](https://hamvoip.org/) nodes.
 
 ## Scripts
