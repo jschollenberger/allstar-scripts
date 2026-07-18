@@ -9,6 +9,21 @@
 #   to reuse this same script on the UHF box (node 53209) unmodified.
 #
 # Requires: inotify-tools, sox (developed/tested against SoX 14.4.2)
+#
+# Copyright (C) 2026 Jason Schollenberger
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 set -u
 
@@ -40,6 +55,17 @@ log() {
 
 log "Starting watcher on $WATCH_DIR"
 
+# FIX: clean up temp files orphaned by a previous run that was killed
+# mid-conversion (between sox writing *_temp.WAV and the mv). The filename
+# filter below skips *_temp.wav forever, so without this they'd linger
+# permanently. Only remove ones older than 5 minutes so we can never race
+# a conversion that is somehow legitimately in flight.
+find "$WATCH_DIR" -maxdepth 1 -iname '*_temp.wav' -mmin +5 -print0 2>/dev/null |
+    while IFS= read -r -d '' stale; do
+        log "Removing stale temp file from previous run: $(basename "$stale")"
+        rm -f "$stale"
+    done
+
 # Clean shutdown on systemd stop / Ctrl-C. A trap alone can't interrupt a
 # blocking `cmd | while read` pipeline -- the shell won't notice SHUTDOWN=1
 # until the pipeline itself ends, and inotifywait never gets the signal
@@ -70,8 +96,9 @@ _prune_recent() {
 
 process_file() {
     local NEWFILE="$1"
-    local QUIET="${2:-0}"        # 1 = suppress the routine "already PCM" line (used by catch_up_scan)
-    local DO_SETTLE="${3:-1}"    # 0 = skip SETTLE_DELAY (pre-existing files can't still be mid-write)
+    local QUIET="${2:-0}"      # 1 = suppress the routine "already PCM" line (used by catch_up_scan)
+    local DO_SETTLE="${3:-1}"  # 0 = skip SETTLE_DELAY (pre-existing files can't still be mid-write)
+
     local NEWFILE_LC="${NEWFILE,,}"
 
     # Case-insensitive .WAV filter; skip our own temp files outright.
@@ -93,6 +120,7 @@ process_file() {
     local TEMPFILE="$WATCH_DIR/${NEWFILE%.*}_temp.WAV"
 
     [[ -f "$INPUT" ]] || return
+
     [[ "$DO_SETTLE" == "1" ]] && sleep "$SETTLE_DELAY"
 
     local ENCODING
