@@ -60,6 +60,10 @@ Executed from cron:
 
 These scripts are written for Asterisk-based AllStarLink/HamVOIP nodes and call out to the `asterisk` CLI (`asterisk -rx ...`) directly, so they're intended to run on the node itself (or somewhere with `asterisk -rx` access). Some scripts additionally expect `/usr/local/etc/allstar.env` to define `NODE1` for your node's ID, and `convert-archive-wav.sh` requires `inotify-tools` and `sox`.
 
-## Disclaimer
-
-These are personal scripts shared as-is, with no warranty. Review before running on a production node, and adjust node numbers, paths, and ignore lists for your own setup.
+## License
+ 
+This project is licensed under the [GNU General Public License v3.0](LICENSE) (or, at your option, any later version). You are free to use, modify, and redistribute these scripts, provided derivative works remain under the same license and retain the copyright and license notices.
+ 
+`playnews-cw` is a modified version of `playnews` by WA3DSP; the original copyright and license notices are preserved.
+ 
+These scripts are provided as-is, with no warranty (see sections 15–16 of the license). Review before running on a production node, and adjust node numbers, paths, and ignore lists for your own setup.
